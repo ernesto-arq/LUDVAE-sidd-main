@@ -14,10 +14,10 @@
         "/content/noisy/"
       ],
       "n_max": null,
-      "H_size": 40, // patch size 40 | 64 | 96 | 128 | 192
+      "H_size": 64, // patch size 40 | 64 | 96 | 128 | 192
       "dataloader_shuffle": false,
       "dataloader_num_workers": 8,
-      "dataloader_batch_size": 8,
+      "dataloader_batch_size": 16,
       "H_noise_level": 40,
       "L_noise_level": 20
     },
@@ -27,7 +27,7 @@
         "/content/val_clean/",
         "/content/val_noisy/"
       ],
-      "H_size": 32,
+      "H_size": 256,
       "n_max": 20,
       "H_noise_level": 40,
       "L_noise_level": 20
