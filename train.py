@@ -130,7 +130,7 @@ def main(json_path: str ='./train_sidd.jsonc'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[GPU] Device selecionado: {device}")
 
-    num_epochs = 2  # você pode trocar por opt['train']['n_epochs'], se existir
+    num_epochs = 100  # você pode trocar por opt['train']['n_epochs'], se existir
     for epoch in range(num_epochs):  # loop de épocas
         print(f"Iniciando época {epoch+1}/{num_epochs}")
 
