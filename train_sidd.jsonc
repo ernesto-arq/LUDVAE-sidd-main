@@ -40,10 +40,10 @@
     "KL_anneal_maxiter": 1e8,
     "KL_weight": 1e-4,
     "scheduler_type": "MultiStepLR", // "MultiStepLR" is enough
-    "scheduler_milestones": [100000],
+    "scheduler_milestones": [100],
     "scheduler_gamma": 0.5,
-    "checkpoint_test": 50000, // for testing
-    "checkpoint_save": 50000, // for saving model
-    "checkpoint_print": 1000 // for print
+    "checkpoint_test": 50, // for testing
+    "checkpoint_save": 50, // for saving model
+    "checkpoint_print": 10 // for print
   }
 }
