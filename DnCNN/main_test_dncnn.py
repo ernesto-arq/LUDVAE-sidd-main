@@ -30,8 +30,8 @@ def main():
     # L_path, E_path, H_path
     # ----------------------------------------
 
-    L_path = '/home/dihan/dataset/SIDD_Small_sRGB/val_noisy/' 
-    H_path = '/home/dihan/dataset/SIDD_Small_sRGB/val_clean/' 
+    L_path = '/content/val_noisy/' 
+    H_path = '/content/val_clean/' 
     E_path = os.path.join(results, result_name)   # E_path, for Estimated images
     util.mkdir(E_path)
 
