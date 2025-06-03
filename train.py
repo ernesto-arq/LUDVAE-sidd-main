@@ -126,7 +126,14 @@ def main(json_path: str ='./train_sidd.jsonc'):
     # ----------------------------------------
     '''
 
-    for epoch in range(2):  # keep running
+    # [PRINT] detectar GPU/CPU e mostrar qual device será usado (CUDA)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[GPU] Device selecionado: {device}")
+
+    num_epochs = 2  # você pode trocar por opt['train']['n_epochs'], se existir
+    for epoch in range(num_epochs):  # loop de épocas
+        print(f"Iniciando época {epoch+1}/{num_epochs}")
+
         for i, train_data in enumerate(train_loader):
 
             current_step += 1
@@ -135,6 +142,12 @@ def main(json_path: str ='./train_sidd.jsonc'):
             # 1) update learning rate
             # -------------------------------
             model.update_learning_rate(current_step)
+
+            # -------------------------------
+            # [PRINT] Mostrar informações do batch (tamanhos das tensões)
+            # -------------------------------
+            batch_sizes = {k: v.shape if isinstance(v, torch.Tensor) else None for k, v in train_data.items()}
+            print(f"[Batch] Epoch {epoch+1}, Iter {current_step}, tamanhos: {batch_sizes}")
 
             # -------------------------------
             # 2) feed patch pairs
@@ -151,16 +164,21 @@ def main(json_path: str ='./train_sidd.jsonc'):
             # --------------------------
             if current_step % opt['train']['checkpoint_print'] == 0:
                 logs = model.current_log()  # such as loss
-                message = '<epoch:{:3d}, iter:{:8,d}, lr:{:.3e}> '.format(epoch, current_step, model.current_learning_rate())
+                message = (
+                    f"<epoch:{epoch+1:3d}, iter:{current_step:8,d}, "
+                    f"lr:{model.current_learning_rate():.3e}> "
+                )
                 for k, v in logs.items():  # merge log information into message
-                    message += '{:s}: {:.3e} '.format(k, v)
+                    message += f"{k}: {v:.3e} "
                 logger.info(message)
+                print(f"[Log] {message}")
 
             # -------------------------------
             # 5) save model
             # -------------------------------
             if current_step % opt['train']['checkpoint_save'] == 0:
                 logger.info('Saving the model.')
+                print(f"[Checkpoint] Salvando modelo no passo {current_step}...")
                 model.save(current_step)
 
             # -------------------------------
@@ -177,8 +195,12 @@ def main(json_path: str ='./train_sidd.jsonc'):
                     img_dir = os.path.join(opt['path']['images'], img_name)
                     image_util.mkdir(img_dir)
 
-                    model.feed_data(test_data)
+                    # -------------------------------
+                    # [PRINT] Configuração do caminho do arquivo salvo
+                    # -------------------------------
+                    print(f"[Teste] Salvando resultado de {img_name} (label={{label}}) no passo {current_step} em {img_dir}")
 
+                    model.feed_data(test_data)
                     model.test()
 
                     visuals = model.current_visuals()
@@ -189,8 +211,12 @@ def main(json_path: str ='./train_sidd.jsonc'):
                     # -----------------------
                     # save
                     # -----------------------
-                    save_img_path = os.path.join(img_dir, '{:s}_{}.png'.format(img_name, label))
-                    save_img_t_path = os.path.join(img_dir, '{:s}_{}_to_{}_{:d}.png'.format(img_name, label, 1-label, current_step))
+                    save_img_path = os.path.join(
+                        img_dir, f'{img_name}_{label}.png'
+                    )
+                    save_img_t_path = os.path.join(
+                        img_dir, f'{img_name}_{label}_to_{1-label}_{current_step}.png'
+                    )
 
                     image_util.imsave(img_t, save_img_t_path)
 
@@ -198,9 +224,10 @@ def main(json_path: str ='./train_sidd.jsonc'):
                         image_util.imsave(img, save_img_path)
 
     logger.info('Saving the final model.')
+    print("[Final] Salvando modelo final…")
     model.save('latest')
     logger.info('End of training.')
-
+    print("Geração concluída com sucesso!")
 
 if __name__ == '__main__':
     main()
