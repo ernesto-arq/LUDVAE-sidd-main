@@ -48,6 +48,7 @@ def main():
 
     L_path = '/content/val_noisy/'
     H_path = '/content/val_clean/'
+
     E_path = os.path.join(results, result_name)
     util.mkdir(E_path)
 

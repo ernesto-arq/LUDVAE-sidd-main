@@ -1,21 +1,23 @@
 import os.path
-import math
-import argparse
-import time
-import random
+import logging
+
 import numpy as np
 from collections import OrderedDict
-import logging
-import torch
-from torch.utils.data import DataLoader
 
+import torch
+from skimage.transform import resize  # se quiser testar resize em vez de crop (não obrigatório)
 
 from utils import utils_logger
+from utils import utils_model
 from utils import utils_image as util
-from utils import utils_option as option
 
-from data.select_dataset import define_Dataset
-from models.select_model import define_Model
+
+def center_crop(img, target_shape):
+    h, w = img.shape[:2]
+    th, tw = target_shape[:2]
+    start_x = (w - tw) // 2
+    start_y = (h - th) // 2
+    return img[start_y:start_y+th, start_x:start_x+tw]
 
 
 '''
@@ -42,215 +44,90 @@ from models.select_model import define_Model
 # --------------------------------------------
 '''
 
-
-def main(json_path='options/train_dncnn.json'):
-
-    '''
-    # ----------------------------------------
-    # Step--1 (prepare opt)
-    # ----------------------------------------
-    '''
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-opt', type=str, default=json_path, help='Path to option JSON file.')
-
-    opt = option.parse(parser.parse_args().opt, is_train=True)
-    util.mkdirs((path for key, path in opt['path'].items() if 'pretrained' not in key))
+def main():
 
     # ----------------------------------------
-    # update opt
+    # Preparation
     # ----------------------------------------
-    # -->-->-->-->-->-->-->-->-->-->-->-->-->-
-    init_iter, init_path_G = option.find_last_checkpoint(opt['path']['models'], net_type='G')
-    opt['path']['pretrained_netG'] = init_path_G
-    current_step = init_iter
 
-    border = 0
-    # --<--<--<--<--<--<--<--<--<--<--<--<--<-
+    model_name = 'dncnn'
+    testset_name = 'sidd'
 
-    # ----------------------------------------
-    # save opt to  a '../option.json' file
-    # ----------------------------------------
-    option.save(opt)
+    model_pool = 'model_zoo'
+    results = 'results'
+    result_name = testset_name + '_' + model_name
+    model_path = os.path.join(model_pool, model_name + '.pth')
 
-    # ----------------------------------------
-    # return None for missing key
-    # ----------------------------------------
-    opt = option.dict_to_nonedict(opt)
+    L_path = '/content/train/syntheticData/NOISY_SRGB/'
+    H_path = '/content/train/syntheticData/GT_SRGB/'
+    E_path = os.path.join(results, result_name)
+    util.mkdir(E_path)
 
-    # ----------------------------------------
-    # configure logger
-    # ----------------------------------------
-    logger_name = 'train'
-    utils_logger.logger_info(logger_name, os.path.join(opt['path']['log'], logger_name+'.log'))
+    logger_name = result_name
+    utils_logger.logger_info(logger_name, log_path=os.path.join(E_path, logger_name + '.log'))
     logger = logging.getLogger(logger_name)
-    logger.info(option.dict2str(opt))
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # ----------------------------------------
-    # seed
+    # Load model
     # ----------------------------------------
-    seed = opt['train']['manual_seed']
-    if seed is None:
-        seed = random.randint(1, 10000)
-    logger.info('Random seed: {}'.format(seed))
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
-    '''
-    # ----------------------------------------
-    # Step--2 (creat dataloader)
-    # ----------------------------------------
-    '''
+    from models.network_dncnn import DnCNN as net
+    model = net(in_nc=3, out_nc=3, nc=64, nb=17, act_mode='BR')
+    model.load_state_dict(torch.load(model_path), strict=True)
+    model.eval()
+    for k, v in model.named_parameters():
+        v.requires_grad = False
+    model = model.to(device)
 
-    # ----------------------------------------
-    # 1) create_dataset
-    # 2) creat_dataloader for train and test
-    # ----------------------------------------
-    dataset_type = opt['datasets']['train']['dataset_type']
-    for phase, dataset_opt in opt['datasets'].items():
-        if phase == 'train':
-            train_set = define_Dataset(dataset_opt)
-            train_size = int(math.ceil(len(train_set) / dataset_opt['dataloader_batch_size']))
-            logger.info('Number of train images: {:,d}, iters: {:,d}'.format(len(train_set), train_size))
-            train_loader = DataLoader(train_set,
-                                      batch_size=dataset_opt['dataloader_batch_size'],
-                                      shuffle=dataset_opt['dataloader_shuffle'],
-                                      num_workers=dataset_opt['dataloader_num_workers'],
-                                      drop_last=True,
-                                      pin_memory=True)
-        elif phase == 'test':
-            test_set = define_Dataset(dataset_opt)
-            test_loader = DataLoader(test_set, batch_size=1,
-                                     shuffle=False, num_workers=1,
-                                     drop_last=False, pin_memory=True)
-        else:
-            raise NotImplementedError("Phase [%s] is not recognized." % phase)
+    logger.info(f'Model path: {model_path}')
+    number_parameters = sum(map(lambda x: x.numel(), model.parameters()))
+    logger.info(f'Params number: {number_parameters}')
 
-    '''
-    # ----------------------------------------
-    # Step--3 (initialize model)
-    # ----------------------------------------
-    '''
+    test_results = OrderedDict()
+    test_results['psnr'] = []
+    test_results['ssim'] = []
 
-    model = define_Model(opt)
+    L_paths = util.get_image_paths(L_path)
+    H_paths = util.get_image_paths(H_path)
 
-    if opt['merge_bn'] and current_step > opt['merge_bn_startpoint']:
-        logger.info('^_^ -----merging bnorm----- ^_^')
-        model.merge_bnorm_test()
+    logger.info(f'Model: {model_name} | Testset: {testset_name}')
+    logger.info(f'Found {len(L_paths)} noisy images and {len(H_paths)} clean images')
 
-    logger.info(model.info_network())
-    model.init_train()
-    logger.info(model.info_params())
+    for idx, img in enumerate(L_paths):
 
-    '''
-    # ----------------------------------------
-    # Step--4 (main training)
-    # ----------------------------------------
-    '''
-    
-    best_psnr = 0
-    
+        img_name, ext = os.path.splitext(os.path.basename(img))
+        img_L = util.imread_uint(img, n_channels=3)
+        img_L = util.uint2single(img_L)
+        img_L_tensor = util.single2tensor4(img_L).to(device)
 
-    for epoch in range(100):  # keep running
-        for i, train_data in enumerate(train_loader):
+        # Model inference
+        img_E_tensor = model(img_L_tensor)
+        img_E = util.tensor2uint(img_E_tensor)
 
-            current_step += 1
+        # Load ground truth
+        img_H = util.imread_uint(H_paths[idx], n_channels=3)
 
-            if dataset_type == 'dnpatch' and current_step % 20000 == 0:  # for 'train400'
-                train_loader.dataset.update_data()
+        # Ensure same size (crop GT if needed)
+        if img_E.shape != img_H.shape:
+            logger.warning(f"[{img_name}] Shape mismatch: Estimated {img_E.shape}, GT {img_H.shape}. Applying center crop to GT.")
+            img_H = center_crop(img_H, img_E.shape)
 
-            # -------------------------------
-            # 1) update learning rate
-            # -------------------------------
-            model.update_learning_rate(current_step)
+        # PSNR & SSIM
+        psnr = util.calculate_psnr(img_E, img_H, border=0)
+        ssim = util.calculate_ssim(img_E, img_H, border=0)
+        test_results['psnr'].append(psnr)
+        test_results['ssim'].append(ssim)
+        logger.info(f'{img_name+ext} - PSNR: {psnr:.2f} dB; SSIM: {ssim:.4f}')
 
-            # -------------------------------
-            # 2) feed patch pairs
-            # -------------------------------
-            model.feed_data(train_data)
+        # Save result
+        util.imsave(img_E, os.path.join(E_path, img_name + ext))
 
-            # -------------------------------
-            # 3) optimize parameters
-            # -------------------------------
-            model.optimize_parameters(current_step)
-
-            # -------------------------------
-            # merge bnorm
-            # -------------------------------
-            if opt['merge_bn'] and opt['merge_bn_startpoint'] == current_step:
-                logger.info('^_^ -----merging bnorm----- ^_^')
-                model.merge_bnorm_train()
-                model.print_network()
-
-            # -------------------------------
-            # 4) training information
-            # -------------------------------
-            if current_step % opt['train']['checkpoint_print'] == 0:
-                logs = model.current_log()  # such as loss
-                message = '<epoch:{:3d}, iter:{:8,d}, lr:{:.3e}> '.format(epoch, current_step, model.current_learning_rate())
-                for k, v in logs.items():  # merge log information into message
-                    message += '{:s}: {:.3e} '.format(k, v)
-                logger.info(message)
-
-            # -------------------------------
-            # 5) save model
-            # -------------------------------
-            if current_step % opt['train']['checkpoint_save'] == 0:
-                logger.info('Saving the model.')
-                model.save(current_step)
-
-            # -------------------------------
-            # 6) testing
-            # -------------------------------
-            if current_step % opt['train']['checkpoint_test'] == 0:
-
-                avg_psnr = 0.0
-                idx = 0
-
-                for test_data in test_loader:
-                    idx += 1
-                    image_name_ext = os.path.basename(test_data['L_path'][0])
-                    img_name, ext = os.path.splitext(image_name_ext)
-
-                    img_dir = os.path.join(opt['path']['images'], img_name)
-                    util.mkdir(img_dir)
-
-                    model.feed_data(test_data)
-                    model.test()
-
-                    visuals = model.current_visuals()
-                    E_img = util.tensor2uint(visuals['E'])
-                    H_img = util.tensor2uint(visuals['H'])
-
-                    # -----------------------
-                    # save estimated image E
-                    # -----------------------
-                    # save_img_path = os.path.join(img_dir, '{:s}_{:d}.png'.format(img_name, current_step))
-                    # util.imsave(E_img, save_img_path)
-
-                    # -----------------------
-                    # calculate PSNR
-                    # -----------------------
-                    current_psnr = util.calculate_psnr(E_img, H_img, border=border)
-
-                    # logger.info('{:->4d}--> {:>10s} | {:<4.2f}dB'.format(idx, image_name_ext, current_psnr))
-
-                    avg_psnr += current_psnr
-
-                avg_psnr = avg_psnr / idx
-
-                if avg_psnr > best_psnr:
-                    best_psnr = avg_psnr
-                    model.save('best')
-
-                # testing log
-                logger.info('<epoch:{:3d}, iter:{:8,d}, Average PSNR : {:<.2f}dB, Best PSNR : {:<.2f}dB\n'.format(epoch, current_step, avg_psnr, best_psnr))
-
-    logger.info('Saving the final model.')
-    model.save('latest')
-    logger.info('End of training.')
+    # Average metrics
+    ave_psnr = sum(test_results['psnr']) / len(test_results['psnr'])
+    ave_ssim = sum(test_results['ssim']) / len(test_results['ssim'])
+    logger.info(f'Average PSNR/SSIM(RGB) - {result_name} - PSNR: {ave_psnr:.2f} dB; SSIM: {ave_ssim:.4f}')
 
 
 if __name__ == '__main__':
